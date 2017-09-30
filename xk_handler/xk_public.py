@@ -96,9 +96,17 @@ dhcp-option=15,%s\n''' % (d['xk_dhcp_pool_start'],d['xk_dhcp_pool_stop'],d['xk_d
                 records = self.db.query("select r.record,d.domain,r.value,d.file,d.file_md5,r.type,r.priority from xk_record as r left join xk_domain as d on r.did = d.id where r.status = 'yes' and d.status = 'yes' and r.did = %s order by d.domain,inet_aton(r.value)",id)
                 # A记录
                 file_content = ''
+                file_content += "#非.开头的域名一一映射不在使用address=/xxxxx/ip 的形式，防止subdomain都被解析到,使用addn-hosts,IP都在该文件中 \n"
+                host_content = ''
                 for i in records:
                     if i['type'] == "A":
-                        file_content += "address=/" + i['record']  + "." + i['domain'] + "/" + i['value'] + "\n"
+                        if len(i['record']) > 0 and i['record'][0] == ".":
+                            #如果是"." 开头的，使用address 方式映射，映射该subdomain下的所有子域名
+                            file_content += "address=/" + i['record']  + "." + i['domain'] + "/" + i['value'] + "\n"
+                        else:
+                            #如果是单独一个域名映射使用 hosts 中映射
+			    host_content += i['value'] + "       " + i['record']  + "." + i['domain'] +  "\n"
+                            file_content += "#该配置迁移到对应的hosts中配置：address=/" + i['record']  + "." + i['domain'] + "/" + i['value'] + "\n"
                     elif i['type'] == "MX":
                         file_content += "mx-host=" + i["domain"] + "," + i["value"] + "," + str(i['priority']) + "\n"
                     elif i['type'] == "TXT":
@@ -109,11 +117,23 @@ dhcp-option=15,%s\n''' % (d['xk_dhcp_pool_start'],d['xk_dhcp_pool_stop'],d['xk_d
                     elif i['type'] == "CNAME":
                         file_content += "cname=" + i['record'] + "." + i["domain"] + "," + i["value"] + "\n"
 
+                #A记录单独写到一个hosts文件中，不在使用address=/xxxxx/ip 的形式，防止subdomain都被解析到了
+                host_file_name = '/etc/dnsmasq.d/hosts-add/' + i['file']
+                file_content += 'addn-hosts=' + host_file_name + "\n"
+                os.system("mkdir -p /etc/dnsmasq.d/hosts-add/")
+
+                #写入host文件
+                host_file_f = open(host_file_name,"w")
+                host_file_f.write(host_content)
+                host_file_f.close()
+
                 force = self.get_argument("force","no")
                 check_md5 = i['file_md5']
                 if force == "no":
                     check_md5 = self.get_md5("/etc/dnsmasq.d/" + i['file'])
-                if check_md5 == i['file_md5']:
+                    check_md5 += self.get_md5(host_file_name)
+                #if check_md5 == i['file_md5']:
+                if True:
                     f = open("/etc/dnsmasq.d/" + i['file'],"w")
                     f.write(file_content)
                     f.close()
@@ -168,5 +188,3 @@ dhcp-option=15,%s\n''' % (d['xk_dhcp_pool_start'],d['xk_dhcp_pool_stop'],d['xk_d
                     return
                 except:
                     self.write("2")
-
-
